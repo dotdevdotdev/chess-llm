@@ -1,5 +1,5 @@
 """
-LLM agent communication classes for different providers with bug fixes
+LLM agent communication classes for different providers
 """
 import openai
 import anthropic
@@ -38,7 +38,6 @@ class LLMAgent:
         if self.provider == 'openai':
             self.client = openai.OpenAI(api_key=api_key, base_url=provider_config.get('base_url'))
         elif self.provider == 'anthropic':
-            # Only pass api_key to avoid the proxies error
             self.client = anthropic.Anthropic(api_key=api_key)
         elif self.provider == 'qwen':
             dashscope.api_key = api_key
@@ -136,12 +135,9 @@ class LLMAgent:
         if system_message:
             params["system"] = system_message
             
-        # Add custom settings but filter out any that might cause issues
+        # Add custom settings
         custom_settings = model_config.get('custom_settings', {})
-        # Remove any settings that might conflict with the client initialization
-        safe_custom_settings = {k: v for k, v in custom_settings.items() 
-                               if k not in ['proxies', 'base_url', 'api_key']}
-        params.update(safe_custom_settings)
+        params.update(custom_settings)
         
         response = self.client.messages.create(**params)
         return response.content[0].text
@@ -174,43 +170,8 @@ class LLMAgent:
         custom_settings = model_config.get('custom_settings', {})
         params.update(custom_settings)
         
-        try:
-            response = self.client.Generation.call(**params)
-            
-            # Debug logging
-            import logging
-            logging.info(f"Qwen raw response type: {type(response)}")
-            logging.info(f"Qwen raw response: {response}")
-            
-            # Handle different response structures from Qwen
-            if hasattr(response, 'output'):
-                if hasattr(response.output, 'text'):
-                    return response.output.text
-                elif isinstance(response.output, str):
-                    return response.output
-                elif isinstance(response.output, dict) and 'text' in response.output:
-                    return response.output['text']
-                else:
-                    # Try to extract text from whatever structure we get
-                    return str(response.output)
-            elif hasattr(response, 'text'):
-                return response.text
-            elif isinstance(response, dict):
-                # Handle dictionary response
-                if 'output' in response:
-                    if isinstance(response['output'], dict) and 'text' in response['output']:
-                        return response['output']['text']
-                    else:
-                        return str(response['output'])
-                elif 'text' in response:
-                    return response['text']
-                else:
-                    return str(response)
-            else:
-                # Last resort - convert to string
-                return str(response)
-        except Exception as e:
-            raise Exception(f"Failed to parse Qwen response: {str(e)}")
+        response = self.client.Generation.call(**params)
+        return response.output.text
 
 
 def load_config(config_path: str = "llm_config.yaml") -> Dict[str, Any]:

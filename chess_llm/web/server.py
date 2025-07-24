@@ -1,9 +1,9 @@
 """
 Web server for the Chess LLM Orchestration System using FastAPI
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
@@ -28,6 +28,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Handle all unhandled exceptions and return JSON response."""
+    import traceback
+    error_trace = traceback.format_exc()
+    print(f"Unhandled exception: {str(exc)}")
+    print(f"Traceback: {error_trace}")
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": str(exc), "detail": "Internal server error"}
+    )
 
 # Store active games and connections
 active_connections: Dict[str, WebSocket] = {}
@@ -122,13 +135,30 @@ async def make_move(move: str):
 @app.post("/api/game/reset")
 async def reset_game():
     """Reset the current game."""
-    if not games:
-        # Create a new game
-        game_id = "default"
-        games[game_id] = ChessGame()
-    else:
-        game_id = list(games.keys())[0]
+    game_id = "default"
+    
+    # Stop any running game tasks
+    if game_id in orchestrators:
+        orchestrators[game_id].stop()
+    if game_id in game_tasks:
+        if not game_tasks[game_id].done():
+            game_tasks[game_id].cancel()
+            try:
+                # Wait briefly for cancellation
+                await asyncio.wait_for(game_tasks[game_id], timeout=0.5)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+        del game_tasks[game_id]
+    
+    # Clean up orchestrator
+    if game_id in orchestrators:
+        del orchestrators[game_id]
+    
+    # Reset or create new game
+    if game_id in games:
         games[game_id].reset_game()
+    else:
+        games[game_id] = ChessGame()
     
     game = games[game_id]
     
@@ -177,6 +207,7 @@ async def broadcast_log(message: str, level: str = "info"):
 @app.post("/api/game/start")
 async def start_llm_game(request: StartGameRequest):
     """Start a new LLM vs LLM game."""
+    import traceback
     game_id = "default"  # For now, single game support
     
     # Stop any existing game
@@ -184,6 +215,17 @@ async def start_llm_game(request: StartGameRequest):
         if not game_tasks[game_id].done():
             orchestrators[game_id].stop()
             game_tasks[game_id].cancel()
+            try:
+                # Wait briefly for cancellation
+                await asyncio.wait_for(game_tasks[game_id], timeout=0.5)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+        del game_tasks[game_id]
+    
+    # Clean up old orchestrator
+    if game_id in orchestrators:
+        orchestrators[game_id].stop()
+        del orchestrators[game_id]
     
     # Create new game and orchestrator
     games[game_id] = ChessGame()
@@ -208,7 +250,8 @@ async def start_llm_game(request: StartGameRequest):
     available_providers = {
         "openai": ["gpt-4", "gpt-3.5", "gpt-4o"],
         "anthropic": ["claude-3-opus", "claude-3-sonnet", "claude-3-haiku"],
-        "qwen": ["qwen-max", "qwen-plus"],
+        # Temporarily disable Qwen due to API issues
+        # "qwen": ["qwen-max", "qwen-plus"],
         "mock": ["mock"]  # Add mock provider
     }
     
@@ -217,37 +260,41 @@ async def start_llm_game(request: StartGameRequest):
     has_anthropic = bool(os.getenv("ANTHROPIC_API_KEY"))
     has_qwen = bool(os.getenv("ALIBABA_CLOUD_API_KEY"))
     
-    # If no API keys are set, use mock agents
-    if not (has_openai or has_anthropic or has_qwen):
+    # Check if selected providers have API keys available
+    if request.white_provider == "openai" and not has_openai:
+        await broadcast_log("OpenAI API key not found, using mock for White", level="warning")
         request.white_provider = "mock"
         request.white_model = "mock"
+    elif request.white_provider == "anthropic" and not has_anthropic:
+        await broadcast_log("Anthropic API key not found, using mock for White", level="warning")
+        request.white_provider = "mock"
+        request.white_model = "mock"
+    elif request.white_provider == "qwen" and not has_qwen:
+        await broadcast_log("Qwen API key not found, using mock for White", level="warning")
+        request.white_provider = "mock"
+        request.white_model = "mock"
+        
+    if request.black_provider == "openai" and not has_openai:
+        await broadcast_log("OpenAI API key not found, using mock for Black", level="warning")
         request.black_provider = "mock"
         request.black_model = "mock"
-        await broadcast_log("No API keys found, using mock agents for testing", level="warning")
-    else:
-        # Select from available providers based on API keys
-        available = []
-        if has_openai:
-            available.append("openai")
-        if has_anthropic:
-            available.append("anthropic")
-        if has_qwen:
-            available.append("qwen")
-            
-        # Select random providers if not specified
-        if not request.white_provider and available:
-            request.white_provider = random.choice(available)
-            request.white_model = random.choice(available_providers[request.white_provider])
-        elif not request.white_provider:
-            request.white_provider = "mock"
-            request.white_model = "mock"
-        
-        if not request.black_provider and available:
-            request.black_provider = random.choice(available)
-            request.black_model = random.choice(available_providers[request.black_provider])
-        elif not request.black_provider:
-            request.black_provider = "mock"
-            request.black_model = "mock"
+    elif request.black_provider == "anthropic" and not has_anthropic:
+        await broadcast_log("Anthropic API key not found, using mock for Black", level="warning")
+        request.black_provider = "mock"
+        request.black_model = "mock"
+    elif request.black_provider == "qwen" and not has_qwen:
+        await broadcast_log("Qwen API key not found, using mock for Black", level="warning")
+        request.black_provider = "mock"
+        request.black_model = "mock"
+    
+    # If no providers specified, default to mock
+    if not request.white_provider:
+        request.white_provider = "mock"
+        request.white_model = "mock"
+    
+    if not request.black_provider:
+        request.black_provider = "mock"
+        request.black_model = "mock"
     
     try:
         # Initialize agents
@@ -262,6 +309,13 @@ async def start_llm_game(request: StartGameRequest):
         game_task = asyncio.create_task(orchestrator.play_game())
         game_tasks[game_id] = game_task
         
+        # Add a callback to clean up when the game completes
+        def cleanup_game_task(task):
+            if game_id in game_tasks and game_tasks[game_id] == task:
+                del game_tasks[game_id]
+        
+        game_task.add_done_callback(cleanup_game_task)
+        
         return {
             "success": True,
             "game_id": game_id,
@@ -270,7 +324,11 @@ async def start_llm_game(request: StartGameRequest):
         }
         
     except Exception as e:
-        await broadcast_log(f"Failed to start game: {str(e)}", level="error")
+        error_msg = f"Failed to start game: {str(e)}"
+        error_trace = traceback.format_exc()
+        print(f"ERROR in start_llm_game: {error_msg}")
+        print(f"Traceback: {error_trace}")
+        await broadcast_log(error_msg, level="error")
         return {"success": False, "error": str(e)}
 
 @app.post("/api/game/pause")

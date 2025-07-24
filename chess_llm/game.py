@@ -14,6 +14,8 @@ class ChessGame:
         self.board = chess.Board()
         self.game_history = []
         self.move_times = []
+        self.resigned = None  # Track which player resigned
+        self.draw_accepted = False  # Track if draw was accepted
         
     def get_board_fen(self) -> str:
         """Get the current board position in FEN notation."""
@@ -25,11 +27,15 @@ class ChessGame:
     
     def is_game_over(self) -> bool:
         """Check if the game is over."""
-        return self.board.is_game_over()
+        return self.board.is_game_over() or self.resigned is not None or self.draw_accepted
     
     def get_game_result(self) -> Optional[str]:
         """Get the game result if game is over."""
-        if self.board.is_checkmate():
+        if self.resigned:
+            return "resignation"
+        elif self.draw_accepted:
+            return "draw_accepted"
+        elif self.board.is_checkmate():
             return "checkmate"
         elif self.board.is_stalemate():
             return "stalemate"
@@ -97,6 +103,8 @@ class ChessGame:
         self.board.reset()
         self.game_history = []
         self.move_times = []
+        self.resigned = None
+        self.draw_accepted = False
 
 
 # Test the ChessGame class

@@ -176,12 +176,6 @@ class LLMAgent:
         
         try:
             response = self.client.Generation.call(**params)
-            
-            # Debug logging
-            import logging
-            logging.info(f"Qwen raw response type: {type(response)}")
-            logging.info(f"Qwen raw response: {response}")
-            
             # Handle different response structures from Qwen
             if hasattr(response, 'output'):
                 if hasattr(response.output, 'text'):

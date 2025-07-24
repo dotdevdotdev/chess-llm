@@ -233,6 +233,15 @@ Legal moves: {', '.join(game_state['legal_moves'])}"""
                 # Extract move (handle various formats)
                 move = response_text.split()[0].lower() if response_text else ""
                 
+                # Handle "none" or empty responses
+                if not move or move == "none" or move == "null":
+                    if self.log_callback:
+                        await self.log_callback(f"Invalid empty/none response from {current_player}", level="warning")
+                    if attempt < max_retries - 1:
+                        continue  # Retry
+                    else:
+                        return {"error": f"Empty response from {current_player}", "player": current_player}
+                
                 # Validate and make move
                 if move in game_state['legal_moves']:
                     success = self.game.make_move(move, response_time)
