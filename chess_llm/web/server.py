@@ -27,11 +27,19 @@ games: Dict[str, ChessGame] = {}
 
 # Serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
+# Also mount img directory at /img for chessboard.js compatibility
+app.mount("/img", StaticFiles(directory="static/img"), name="img")
 
 @app.get("/")
 async def get_homepage():
     """Serve the main HTML page."""
     return FileResponse("static/index.html")
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Return a 204 No Content for favicon requests to avoid 404 errors."""
+    from fastapi import Response
+    return Response(status_code=204)
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -158,4 +166,4 @@ if __name__ == "__main__":
     print("Starting Chess LLM Orchestration System web server...")
     print("Visit http://localhost:8000 to view the chess board")
     
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -48,7 +48,7 @@ def main():
         try:
             from chess_llm.web.server import app
             import uvicorn
-            uvicorn.run(app, host="0.0.0.0", port=8000)
+            uvicorn.run(app, host="127.0.0.1", port=8000)
         except Exception as e:
             print(f"Error starting web server: {e}")
             return
